@@ -68,6 +68,7 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 start() ->
+    netlink:start(),
     gen_server:start({local, ?SERVER}, ?MODULE, [], []).
 
 %%%===================================================================
@@ -86,11 +87,16 @@ start() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    {ok, 
-     #state{ 
-       link = ?LINK_NAME,   %% configure me! (env?)
-       status = down
-      }}.
+    case os:type() of
+	{unix,linux} ->
+	    {ok, 
+	     #state{ 
+	       link = ?LINK_NAME,   %% configure me! (env?)
+	       status = down
+	      }};
+	_ ->
+	    {stop, {error,linux_only}}
+    end.
 
 %%--------------------------------------------------------------------
 %% @private

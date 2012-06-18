@@ -5,8 +5,9 @@
   {registered, []},
   {applications, [
                   kernel,
-                  stdlib
-                 ]},
+                  stdlib,
+		  netlink
+		  ]},
   {mod, { pppd_mgr_app, []}},
   {env, []}
  ]}.
