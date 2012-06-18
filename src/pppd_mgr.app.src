@@ -1,0 +1,12 @@
+{application, pppd_mgr,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { pppd_mgr_app, []}},
+  {env, []}
+ ]}.

@@ -1,0 +1,47 @@
+/* -*- yang -*- */
+
+module ppp {
+
+    namespace "http://feuerlabs.com/ns/ppp";
+    prefix ppp;
+
+    import uart { prefix uart; }
+
+    organization
+	"Feuerlabs Inc";
+
+    contact
+	"Tony Rogvall <tony@feuerlabs.com>";
+
+    description 
+	"PPP service configuration";
+       
+    revision 2012-06-13 {
+       description
+         "Initial revision.";
+    }
+
+    grouping ppp-config {
+
+     	container uart-config {
+	   uses uart:uart-config;
+	}
+
+	leaf auth { type empty; }
+	leaf call { type string; }
+	leaf connect { type string; }
+	leaf crtscts { type empty; }
+	leaf defaultroute { type empty; }
+	leaf replacedefaultroute { type empty; }
+	leaf disconnect { type string; }	
+	leaf escape { type string; }
+	leaf file { type string; }
+	leaf init { type string; }
+	leaf lock { type empty; }
+	leaf mru { type uint32 { range "128..16384"; }}
+	leaf mtu { type uint32 { range "1280.."; }}
+	leaf passive { type empty; }
+
+	/* ADD MORE HERE ... */
+    }   
+}
