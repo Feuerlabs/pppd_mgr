@@ -24,5 +24,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    {ok, { {one_for_one, 5, 10}, []} }.
+    PppdMgrServer = ?CHILD(pppd_mgr, worker),
+    {ok, { {one_for_one, 5, 10}, [PppdMgrServer]} }.
+
 
