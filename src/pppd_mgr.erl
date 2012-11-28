@@ -1,11 +1,13 @@
-%%%-------------------------------------------------------------------
-%%% @author Tony Rogvall <tony@rogvall.se>
-%%% @copyright (C) 2012, Tony Rogvall
-%%% @doc
-%%%    Manage the PPP connection
-%%% @end
-%%% Created : 14 Jun 2012 by Tony Rogvall <tony@rogvall.se>
-%%%-------------------------------------------------------------------
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+
 -module(pppd_mgr).
 
 -behaviour(gen_server).
@@ -29,7 +31,7 @@
 
 -type pppd_status() :: final1 | down | init0 | init1 | up.
 
--record(state, 
+-record(state,
 	{
 	  link,      %% default link name
 	  status   :: pppd_status(),
@@ -89,8 +91,8 @@ start() ->
 init([]) ->
     case os:type() of
 	{unix,linux} ->
-	    {ok, 
-	     #state{ 
+	    {ok,
+	     #state{
 	       link = ?LINK_NAME,   %% configure me! (env?)
 	       status = down
 	      }};
@@ -113,7 +115,7 @@ init([]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({on,Provider}, _From, State) ->
-    CfgFile = filename:join(code:priv_dir(pppd_mgr), 
+    CfgFile = filename:join(code:priv_dir(pppd_mgr),
 			    Provider++".cfg"),
     PPPFile = filename:join(["/","tmp","ppp-"++Provider]),
     Res = pppd_mgr_options:emit(CfgFile, PPPFile),
@@ -122,7 +124,7 @@ handle_call({on,Provider}, _From, State) ->
 	open_port({spawn_executable, ?PPPD},
 		  [{arg0,?PPPD},
 		   {args,["file", PPPFile]},exit_status]),
-    {reply, ok, State#state { port=Port, 
+    {reply, ok, State#state { port=Port,
 			      provider=Provider,
 			      status=init0 }};
 
@@ -136,7 +138,7 @@ handle_call({attach,Provider}, _From, State) ->
 		    Fs = [if_state,{inet,addr}],
 		    netlink:subscribe(State#state.link,Fs,[flush]),
 		    {reply, {ok,UPid},
-		     State#state { status=init1, 
+		     State#state { status=init1,
 				   provider = Provider,
 				   unix_pid = UPid,
 				   port=undefined}}
@@ -184,7 +186,7 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({Port,{exit_status,Status}}, State) 
+handle_info({Port,{exit_status,Status}}, State)
   when Port =:= State#state.port ->
     if Status =:= 0 ->
 	    io:format("exit_status = 0\n", []),
@@ -198,7 +200,7 @@ handle_info({Port,{exit_status,Status}}, State)
 		    io:format("pppd found ~p\n", [UPid]),
 		    Fs = [if_state,{inet,addr}],
 		    netlink:subscribe(State#state.link,Fs,[flush]),
-		    {noreply, State#state { status=init1, 
+		    {noreply, State#state { status=init1,
 					    unix_pid = UPid,
 					    port=undefined}}
 	    end;

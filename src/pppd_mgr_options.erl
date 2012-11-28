@@ -1,9 +1,12 @@
-%%% @author Tony Rogvall <tony@rogvall.se>
-%%% @copyright (C) 2012, Tony Rogvall
-%%% @doc
-%%%    Write PPPD options from internal format
-%%% @end
-%%% Created : 13 Jun 2012 by Tony Rogvall <tony@rogvall.se>
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
 
 -module(pppd_mgr_options).
 
@@ -31,7 +34,7 @@ format_ppp([{Option, _Line, <<>>, []}|Tail]) ->
     [ Option, "\n" | format_ppp(Tail)];
 format_ppp([{Option, _Line, Arg, []}|Tail]) ->
     [ Option," ",format_arg(Option,Arg),"\n" | format_ppp(Tail)];
-format_ppp([]) ->	    
+format_ppp([]) ->
     [].
 
 format_uart([{<<"device">>, _Line, Arg, []}|Tail]) ->
@@ -65,4 +68,4 @@ is_string_arg(<<"welcome">>) -> true;
 is_string_arg(_) -> false.
 
 
-    
+
