@@ -29,12 +29,18 @@
 -define(PPPD, "/usr/sbin/pppd").
 -define(LINK_NAME, "ppp0").
 
--type pppd_status() :: final1 | down | init0 | init1 | up.
+-type pppd_status() :: final | down | init | up.
+-type posix() :: atom().
+
+-define(ON_TIME,  20000).
+-define(OFF_TIME, 10000).
+-define(ATTACH_TIME, 2000).
 
 -record(state,
 	{
 	  link,      %% default link name
 	  status   :: pppd_status(),
+	  tmr      :: undefined | reference(), %% timer 
 	  netmon   :: reference(),  %% netlink subscription
 	  provider :: string(),     %% current provider
 	  port     :: port(),       %% port while starting pppd
@@ -48,14 +54,35 @@
 %%% API
 %%%===================================================================
 
+%% @doc
+%%   Start or attach an existing ppp connection using
+%%   the name Provider. The `Provider' must exist as a ppp
+%%   options config in pppd_mgr/priv/<`Provider'>.cfg, this
+%%   cfg file is in YANG format.
+%% @end
+-spec on(Provider::string()) -> ok | {error,posix()}.
+
 on(Provider) ->
     gen_server:call(?SERVER, {on,Provider}).
 
+%% @doc
+%%   Stop an existing ppp connection.
+%% @end
+-spec off() -> ok | {error,posix()}.
 off() ->
     gen_server:call(?SERVER, off).
 
+%% @doc
+%%   Attach an existing ppp connection using the name `Provider'.
+%% @end
+-spec attach(Provider::string()) -> ok | {error,posix()}.
 attach(Provider) ->
     gen_server:call(?SERVER, {attach,Provider}).
+
+%% @doc
+%%   Fetch pppd_mgr current status
+%% @end
+-spec status() -> pppd_status().
 
 status() ->
     gen_server:call(?SERVER, status).
@@ -119,25 +146,55 @@ init([]) ->
 %%--------------------------------------------------------------------
 handle_call({on,Provider}, _From, State) ->
     if State#state.status =:= down ->
-	    %% FIXME: attach existing if possible !!!
-	    CfgFile = filename:join(code:priv_dir(pppd_mgr),
-				    Provider++".cfg"),
-	    PPPFile = filename:join(["/","tmp","ppp-"++Provider]),
-	    Res = pppd_mgr_options:emit(CfgFile, PPPFile),
-	    io:format("pppd_mgr_options = ~p\n", [Res]),
-	    Port =
-		open_port({spawn_executable, ?PPPD},
-			  [{arg0,?PPPD},
-			   {args,["file", PPPFile]},exit_status]),
-	    {reply, ok, State#state { port=Port,
-				      provider=Provider,
-				      status=init0 }};
+	    case find_provider_pppd(Provider) of
+		[] ->
+		    CfgFile = filename:join(code:priv_dir(pppd_mgr),
+					    Provider++".cfg"),
+		    PPPFile = filename:join(["/","tmp","ppp-"++Provider]),
+		    Res = pppd_mgr_options:emit(CfgFile, PPPFile),
+		    io:format("pppd_mgr_options = ~p\n", [Res]),
+		    Port =
+			open_port({spawn_executable, ?PPPD},
+				  [{arg0,?PPPD},
+				   {args,["file", PPPFile]},exit_status]),
+		    Tmr = erlang:start_timer(?ON_TIME, self(), up),
+		    {reply, ok, State#state { port=Port,
+					      tmr = Tmr,
+					      provider=Provider,
+					      status=init }};
+		[UPid] ->
+		    io:format("pppd found ~p\n", [UPid]),
+		    State1 = netlink_unsubscribe(State),
+		    State2 = netlink_subscribe(State1),
+		    Tmr = erlang:start_timer(?ATTACH_TIME, self(), attach),
+		    {reply, ok,
+		     State2#state { status=init,
+				    tmr = Tmr,
+				    provider = Provider,
+				    unix_pid = UPid,
+				    port=undefined}}
+	    end;
+       State#state.status =:= up ->
+	    {reply, {error,ealready}, State};
        true ->
-	    io:format("pppd already runnig ~w ~s\n",
+	    io:format("pppd not ready ~w ~s\n",
 		      [State#state.status, State#state.provider]),
-	    {reply, {error,not_down}, State}
+	    {reply, {error,ebusy}, State}
     end;
 
+handle_call(off, _From, State) ->
+    if State#state.status =:= up;
+       State#state.status =:= init ->
+	    kill_pppd(State#state.unix_pid),
+	    Tmr = erlang:start_timer(?OFF_TIME, self(), down),
+	    {reply, ok, State#state { status=final,
+				      tmr = Tmr,
+				      provider = undefined,
+				      unix_pid = undefined }};
+       true ->
+	    {reply, {error,not_running}, State}
+    end;
+%% try attach to possibly existing provider 
 handle_call({attach,Provider}, _From, State) ->
     if State#state.status =:= down ->
 	    case find_provider_pppd(Provider) of
@@ -147,26 +204,20 @@ handle_call({attach,Provider}, _From, State) ->
 		    io:format("pppd found ~p\n", [UPid]),
 		    State1 = netlink_unsubscribe(State),
 		    State2 = netlink_subscribe(State1),
+		    Tmr = erlang:start_timer(?ATTACH_TIME, self(), attach),
 		    {reply, {ok,UPid},
-		     State2#state { status=init1,
+		     State2#state { status=init,
+				    tmr = Tmr,
 				    provider = Provider,
 				    unix_pid = UPid,
 				    port=undefined}}
 	    end;
+       State#state.status =:= up ->
+	    {true, {error,ealready}, State};
        true ->
 	    {reply, {error,not_down}, State}
     end;
 
-handle_call(off, _From, State) ->
-    if State#state.status =:= up;
-       State#state.status =:= init1 ->
-	    os:cmd("/bin/kill -HUP " ++ State#state.unix_pid),
-	    {reply, ok, State#state { status=final1,
-				      provider = undefined,
-				      unix_pid = undefined }};
-       true ->
-	    {reply, {error,not_running}, State}
-    end;
 handle_call(status, _From, State) ->
     {reply, State#state.status, State};
 handle_call(_, _From, State) ->
@@ -210,7 +261,7 @@ handle_info({Port,{exit_status,Status}}, State)
 		[UPid] ->
 		    io:format("pppd found ~p\n", [UPid]),
 		    State2 = netlink_subscribe(State1),
-		    {noreply, State2#state { status=init1,
+		    {noreply, State2#state { status=init,
 					     unix_pid = UPid,
 					     port=undefined}}
 	    end;
@@ -221,23 +272,25 @@ handle_info({Port,{exit_status,Status}}, State)
     end;
 handle_info(_NL={netlink,_Ref,?LINK_NAME,Field,Old,New},State) ->
     io:format("Netlink state changed ~p\n", [_NL]),
-    if State#state.status =:= init1, Field =:= flags ->
-	    io:format("INIT1 test\n", []),
+    if State#state.status =:= init, Field =:= flags ->
+	    io:format("INIT test\n", []),
 	    case (is_list(New) andalso lists:member(up, New)) of
 		true ->
+		    cancel_timer(State#state.tmr),
 		    io:format("UP\n", []),
-		    {noreply, State#state { status=up }};
+		    {noreply, State#state { status=up, tmr=undefined }};
 		false ->
 		    {noreply, State}
 	    end;
-       State#state.status =:= final1, Field =:= flags ->
-	    io:format("FINAL1 test\n", []),
+       State#state.status =:= final, Field =:= flags ->
+	    io:format("FINAL test\n", []),
 	    case (New =:= undefined) orelse
 		(is_list(New) andalso (not lists:member(up, New))) of
 		true ->
+		    cancel_timer(State#state.tmr),
 		    io:format("DOWN\n", []),
 		    State1 = netlink_unsubscribe(State),
-		    {noreply, State1#state { status=down }};
+		    {noreply, State1#state { status=down, tmr=undefined }};
 		false ->
 		    {noreply, State}
 	    end;
@@ -247,6 +300,30 @@ handle_info(_NL={netlink,_Ref,?LINK_NAME,Field,Old,New},State) ->
        true ->
 	    {noreply, State}
     end;
+handle_info({timeout,Ref,down}, State) when State#state.tmr =:= Ref ->
+    if State#state.status =:= final ->
+	    %% something is wrong, but we need to assume ppp is down
+	    {noreply, State#state { status = down, tmr = undefined }};
+       true ->
+	    {noreply, State}
+    end;
+handle_info({timeout,Ref,up}, State) when State#state.tmr =:= Ref ->
+    if State#state.status =:= init ->
+	    %% interface is not coming up
+	    kill_pppd(State#state.unix_pid),
+	    {noreply, State#state { status = down, tmr = undefined }};
+       true ->
+	    {noreply, State}
+    end;
+handle_info({timeout,Ref,attach}, State) when State#state.tmr =:= Ref ->
+    if State#state.status =:= init ->
+	    %% interface is not coming up
+	    kill_pppd(State#state.unix_pid),
+	    {noreply, State#state { status = down, tmr = undefined }};
+       true ->
+	    {noreply, State}
+    end;
+    
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -278,6 +355,22 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+kill_pppd(undefined) ->
+    ok;
+kill_pppd(Pid) ->
+    os:cmd("/bin/kill -HUP " ++ Pid).
+
+cancel_timer(undefined) ->
+    ok;
+cancel_timer(Ref) ->
+    erlang:cancel_timer(Ref),
+    receive
+	{timeout,Ref,_} ->
+	    ok
+    after 0 ->
+	    ok
+    end.
 
 netlink_start() ->
     case os:type() of
