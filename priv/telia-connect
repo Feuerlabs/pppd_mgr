@@ -1,0 +1,8 @@
+TIMEOUT         60
+ABORT           'BUSY'
+ABORT           'ERROR'
+ABORT           'NO CARRIER'
+''              'AT'
+OK              AT+CGDCONT=1,"IP","online,telia.com","0.0.0.0",0,0
+OK              ATD*99***1#
+CONNECT         ''
