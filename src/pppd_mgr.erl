@@ -22,7 +22,7 @@
 %% debug
 -export([start/0]).
 -export([find_provider_pppd/1]).
-
+-compile(export_all).
 
 -define(SERVER, ?MODULE).
 
@@ -70,7 +70,7 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 start() ->
-    netlink:start(),
+    netlink_start(),
     gen_server:start({local, ?SERVER}, ?MODULE, [], []).
 
 %%%===================================================================
@@ -91,13 +91,15 @@ start() ->
 init([]) ->
     case os:type() of
 	{unix,linux} ->
-	    {ok,
-	     #state{
-	       link = ?LINK_NAME,   %% configure me! (env?)
-	       status = down
-	      }};
+	    {ok, #state{ link = ?LINK_NAME,   %% configure me! (env?)
+			 status = down
+		       }};
+	{unix,darwin} ->
+	    {ok, #state{ link = ?LINK_NAME,   %% configure me! (env?)
+			 status = down
+		       }};
 	_ ->
-	    {stop, {error,linux_only}}
+	    {stop, {error,not_supported}}
     end.
 
 %%--------------------------------------------------------------------
@@ -135,8 +137,7 @@ handle_call({attach,Provider}, _From, State) ->
 		    {reply, {error,enoent}, State};
 		[UPid] ->
 		    io:format("pppd found ~p\n", [UPid]),
-		    Fs = [if_state,{inet,addr}],
-		    netlink:subscribe(State#state.link,Fs,[flush]),
+		    netlink_subscribe(State#state.link),
 		    {reply, {ok,UPid},
 		     State#state { status=init1,
 				   provider = Provider,
@@ -198,8 +199,7 @@ handle_info({Port,{exit_status,Status}}, State)
 					    port=undefined}};
 		[UPid] ->
 		    io:format("pppd found ~p\n", [UPid]),
-		    Fs = [if_state,{inet,addr}],
-		    netlink:subscribe(State#state.link,Fs,[flush]),
+		    netlink_subscribe(State#state.link),
 		    {noreply, State#state { status=init1,
 					    unix_pid = UPid,
 					    port=undefined}}
@@ -254,15 +254,51 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+netlink_start() ->
+    case os:type() of
+	{unix,linux} ->
+	    netlink:start();
+	_ ->
+	    %% no netlink here
+	    ok
+    end.
+
+netlink_subscribe(Link) ->
+    Fs = [flags,address],
+    catch netlink:subscribe(Link,Fs,[flush]).
+	    
+
 %% Find unix process pid of pppd running Provider
 find_provider_pppd(Provider) ->
     lists:filter(
       fun(P) ->
-	      Cmd = os:cmd("ps --no-heading -o cmd "++P),
+	      Cmd = command(P),
 	      case string:tokens(Cmd, " \t\n") of
 		  [?PPPD,"file","/tmp/ppp-"++Provider] ->
 		      true;
 		  _ ->
 		      false
 	      end
-      end, string:tokens(os:cmd("pidof pppd")," \t\n")).
+      end, pidof("pppd")).
+
+command(Pid) ->
+    case os:type() of
+	{unix,linux} ->
+	    os:cmd("ps --no-heading -o cmd "++Pid);
+	{unix,darwin} ->
+	    os:cmd("ps -o command= "++Pid);
+	_ ->
+	    ""
+    end.
+
+pidof(What) ->
+    Result = 
+	case os:type() of
+	    {unix,linux} ->
+		os:cmd("pidof " ++ What);
+	    {unix,darwin} ->
+		os:cmd("ps axc|awk '{if ($5==\""++What++"\") print $1}'");
+	    _ ->
+		""
+	end,
+    string:tokens(Result, " \t\n").

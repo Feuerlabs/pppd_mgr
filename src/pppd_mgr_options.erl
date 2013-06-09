@@ -18,7 +18,8 @@ emit(InFile, OutFile) ->
 emit(InFile, OutFile, ExtraOpts) ->
     case yang:parse_file(InFile) of
 	{ok, Cfg} ->
-	    file:write_file(OutFile, format(Cfg,ExtraOpts));
+	    Data = format(Cfg,ExtraOpts),
+	    file:write_file(OutFile, Data);
 	Error ->
 	    Error
     end.
@@ -46,9 +47,19 @@ format_uart([]) ->
 
 format_arg(Option,Arg) ->
     case is_string_arg(Option) of
-	true -> [$",Arg,$"];
-	false -> Arg
+	true -> [$",as_string(Arg),$"];
+	false -> as_string(Arg)
     end.
+
+as_string(X) when is_atom(X) ->
+    atom_to_list(X);
+as_string(X) when is_integer(X) ->
+    integer_to_list(X);
+as_string(X) when is_list(X) ->
+    X;
+as_string(X) when is_binary(X) ->
+    X.
+
 
 is_string_arg(<<"connect">>) -> true;
 is_string_arg(<<"disconnect">>) -> true;
