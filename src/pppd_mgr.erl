@@ -35,9 +35,10 @@
 	{
 	  link,      %% default link name
 	  status   :: pppd_status(),
-	  provider :: string(),  %% current provider
-	  port     :: port(),   %% port while starting pppd
-	  unix_pid :: string()  %% pid of pppd
+	  netmon   :: reference(),  %% netlink subscription
+	  provider :: string(),     %% current provider
+	  port     :: port(),       %% port while starting pppd
+	  unix_pid :: string()      %% pid of pppd
 	}).
 
 -export([on/1, off/0, attach/1]).
@@ -117,18 +118,25 @@ init([]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({on,Provider}, _From, State) ->
-    CfgFile = filename:join(code:priv_dir(pppd_mgr),
-			    Provider++".cfg"),
-    PPPFile = filename:join(["/","tmp","ppp-"++Provider]),
-    Res = pppd_mgr_options:emit(CfgFile, PPPFile),
-    io:format("pppd_mgr_options = ~p\n", [Res]),
-    Port =
-	open_port({spawn_executable, ?PPPD},
-		  [{arg0,?PPPD},
-		   {args,["file", PPPFile]},exit_status]),
-    {reply, ok, State#state { port=Port,
-			      provider=Provider,
-			      status=init0 }};
+    if State#state.status =:= down ->
+	    %% FIXME: attach existing if possible !!!
+	    CfgFile = filename:join(code:priv_dir(pppd_mgr),
+				    Provider++".cfg"),
+	    PPPFile = filename:join(["/","tmp","ppp-"++Provider]),
+	    Res = pppd_mgr_options:emit(CfgFile, PPPFile),
+	    io:format("pppd_mgr_options = ~p\n", [Res]),
+	    Port =
+		open_port({spawn_executable, ?PPPD},
+			  [{arg0,?PPPD},
+			   {args,["file", PPPFile]},exit_status]),
+	    {reply, ok, State#state { port=Port,
+				      provider=Provider,
+				      status=init0 }};
+       true ->
+	    io:format("pppd already runnig ~w ~s\n",
+		      [State#state.status, State#state.provider]),
+	    {reply, {error,not_down}, State}
+    end;
 
 handle_call({attach,Provider}, _From, State) ->
     if State#state.status =:= down ->
@@ -137,12 +145,13 @@ handle_call({attach,Provider}, _From, State) ->
 		    {reply, {error,enoent}, State};
 		[UPid] ->
 		    io:format("pppd found ~p\n", [UPid]),
-		    netlink_subscribe(State#state.link),
+		    State1 = netlink_unsubscribe(State),
+		    State2 = netlink_subscribe(State1),
 		    {reply, {ok,UPid},
-		     State#state { status=init1,
-				   provider = Provider,
-				   unix_pid = UPid,
-				   port=undefined}}
+		     State2#state { status=init1,
+				    provider = Provider,
+				    unix_pid = UPid,
+				    port=undefined}}
 	    end;
        true ->
 	    {reply, {error,not_down}, State}
@@ -192,33 +201,49 @@ handle_info({Port,{exit_status,Status}}, State)
     if Status =:= 0 ->
 	    io:format("exit_status = 0\n", []),
 	    timer:sleep(1000), %% why?
-	    case find_provider_pppd(State#state.provider) of
+	    State1 = netlink_unsubscribe(State),
+	    case find_provider_pppd(State1#state.provider) of
 		[] ->
 		    io:format("BUG: pppd not found\n", []),
-		    {noreply, State#state { status=down,
-					    port=undefined}};
+		    {noreply, State1#state { status=down,
+					     port=undefined}};
 		[UPid] ->
 		    io:format("pppd found ~p\n", [UPid]),
-		    netlink_subscribe(State#state.link),
-		    {noreply, State#state { status=init1,
-					    unix_pid = UPid,
-					    port=undefined}}
+		    State2 = netlink_subscribe(State1),
+		    {noreply, State2#state { status=init1,
+					     unix_pid = UPid,
+					     port=undefined}}
 	    end;
        true ->
 	    io:format("exit_status = ~w\n", [Status]),
 	    %% wait for ppp0 to be in state up!
 	    {noreply, State#state { status=down, port=undefined}}
     end;
-handle_info(_NL={netlink,_Ref,?LINK_NAME,Field,_Old,New},State) ->
+handle_info(_NL={netlink,_Ref,?LINK_NAME,Field,Old,New},State) ->
     io:format("Netlink state changed ~p\n", [_NL]),
-    if State#state.status =:= init1,
-       Field =:= if_state, New =:= up ->
-	    io:format("UP\n", []),
-	    {noreply, State#state { status=up }};
-       State#state.status =:= final1,
-       Field =:= if_state, New =:= down ->
-	    io:format("DOWN\n", []),
-	    {noreply, State#state { status=down }};
+    if State#state.status =:= init1, Field =:= flags ->
+	    io:format("INIT1 test\n", []),
+	    case (is_list(New) andalso lists:member(up, New)) of
+		true ->
+		    io:format("UP\n", []),
+		    {noreply, State#state { status=up }};
+		false ->
+		    {noreply, State}
+	    end;
+       State#state.status =:= final1, Field =:= flags ->
+	    io:format("FINAL1 test\n", []),
+	    case (New =:= undefined) orelse
+		(is_list(New) andalso (not lists:member(up, New))) of
+		true ->
+		    io:format("DOWN\n", []),
+		    State1 = netlink_unsubscribe(State),
+		    {noreply, State1#state { status=down }};
+		false ->
+		    {noreply, State}
+	    end;
+       Field =:= address, Old =:= undefined, is_tuple(New) ->
+	    io:format("PPP got address: ~w\n", [New]),
+	    {noreply, State};	    
        true ->
 	    {noreply, State}
     end;
@@ -263,10 +288,27 @@ netlink_start() ->
 	    ok
     end.
 
-netlink_subscribe(Link) ->
-    Fs = [flags,address],
-    catch netlink:subscribe(Link,Fs,[flush]).
-	    
+netlink_subscribe(State) ->
+    case os:type() of
+	{unix,linux} ->
+	    case netlink:subscribe(State#state.link,[flags,address],[flush]) of
+		{ok,Mon} ->
+		    State#state { netmon = Mon };
+		_Error ->
+		    io:format("netlink_subscriber error ~p\n", [_Error]),
+		    State
+	    end;
+	_ ->
+	    State
+    end.
+
+netlink_unsubscribe(State) ->
+    if is_reference(State#state.netmon) ->
+	    netlink:unsubscribe(State#state.netmon),
+	    State#state { netmon = undefined };
+       true ->
+	    State
+    end.
 
 %% Find unix process pid of pppd running Provider
 find_provider_pppd(Provider) ->
@@ -283,9 +325,7 @@ find_provider_pppd(Provider) ->
 
 command(Pid) ->
     case os:type() of
-	{unix,linux} ->
-	    os:cmd("ps --no-heading -o cmd "++Pid);
-	{unix,darwin} ->
+	{unix,Name} when Name =:= linux; Name =:= darwin ->
 	    os:cmd("ps -o command= "++Pid);
 	_ ->
 	    ""
@@ -294,9 +334,7 @@ command(Pid) ->
 pidof(What) ->
     Result = 
 	case os:type() of
-	    {unix,linux} ->
-		os:cmd("pidof " ++ What);
-	    {unix,darwin} ->
+	    {unix,Name} when Name=:=linux; Name=:=darwin ->
 		os:cmd("ps axc|awk '{if ($5==\""++What++"\") print $1}'");
 	    _ ->
 		""
