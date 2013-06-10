@@ -324,7 +324,7 @@ handle_info(_NL={netlink,_Ref,?LINK_NAME,Field,Old,New},State) ->
 		false ->
 		    {noreply, State}
 	    end;
-       Field =:= address, Old =:= undefined, is_tuple(New) ->
+       Field =:= local, Old =:= undefined, is_tuple(New) ->
 	    io:format("PPP got address: ~w\n", [New]),
 	    {noreply, State};	    
        true ->
@@ -417,7 +417,7 @@ netlink_start() ->
 netlink_subscribe(State) ->
     case os:type() of
 	{unix,linux} ->
-	    case netlink:subscribe(State#state.link,[flags,address],[flush]) of
+	    case netlink:subscribe(State#state.link,[flags,local],[flush]) of
 		{ok,Mon} ->
 		    State#state { netmon = Mon };
 		_Error ->
@@ -425,7 +425,7 @@ netlink_subscribe(State) ->
 		    State
 	    end;
 	{unix,darwin} ->
-	    case fake_netlink_subscribe(State#state.link,[flags,address],[flush]) of
+	    case fake_netlink_subscribe(State#state.link,[flags,local],[flush]) of
 		{ok,Mon} ->
 		    State#state { netmon = Mon };
 		_Error ->
@@ -514,7 +514,7 @@ fake_netlink(Caller,Ref,IfName,Fs0,Addr0,PollTime) ->
 		    ok
 	    end,
 	    if Addr0 =/= Addr1 ->
-		    Caller ! {netlink,Ref,IfName,addr,Addr0,Addr1};
+		    Caller ! {netlink,Ref,IfName,local,Addr0,Addr1};
 	       true ->
 		    ok
 	    end,
@@ -526,7 +526,7 @@ fake_netlink(Caller,Ref,IfName,Fs0,Addr0,PollTime) ->
 		    ok
 	    end,
 	    if Addr0 =/= undefined ->
-		    Caller ! {netlink,Ref,IfName,addr,Addr0,undefined};
+		    Caller ! {netlink,Ref,IfName,local,Addr0,undefined};
 	       true ->
 		    ok
 	    end,
