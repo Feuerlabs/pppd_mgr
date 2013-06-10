@@ -14,10 +14,17 @@
 
 %% API
 -export([start_link/0]).
+-export([on/1, off/0, attach/1]).
+-export([subscribe/0, unsubscribe/0]).
+-export([status/0]).
 
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+-export([init/1, 
+	 handle_call/3, 
+	 handle_cast/2, 
+	 handle_info/2,
+	 terminate/2, 
+	 code_change/3]).
 
 %% debug
 -export([start/0]).
@@ -44,11 +51,10 @@
 	  netmon   :: reference(),  %% netlink subscription
 	  provider :: string(),     %% current provider
 	  port     :: port(),       %% port while starting pppd
-	  unix_pid :: string()      %% pid of pppd
+	  unix_pid :: string(),     %% pid of pppd
+	  subs = []::list()         %% subscriber list %% Monitoring needed ??
 	}).
 
--export([on/1, off/0, attach/1]).
--export([status/0]).
 
 %%%===================================================================
 %%% API
@@ -86,6 +92,20 @@ attach(Provider) ->
 
 status() ->
     gen_server:call(?SERVER, status).
+
+%% @doc
+%%   Subscribe to changes of ppp connection.
+%% @end
+-spec subscribe() -> ok | {error,posix()}.
+subscribe() ->
+    gen_server:call(?SERVER, {subscribe, self()}).
+
+%% @doc
+%%   Unsubscribe to changes of ppp connection.
+%% @end
+-spec unsubscribe() -> ok | {error,posix()}.
+unsubscribe() ->
+    gen_server:call(?SERVER, {unsubscribe, self()}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -220,6 +240,12 @@ handle_call({attach,Provider}, _From, State) ->
 
 handle_call(status, _From, State) ->
     {reply, State#state.status, State};
+
+handle_call({subscribe, Pid}, _From, State=#state {subs = Subs}) ->
+    {reply, ok, State#state {subs = lists:usort([Pid | Subs])}};
+handle_call({unsubscribe, Pid}, _From, State=#state {subs = Subs}) ->
+    {reply, ok, State#state {subs = Subs -- [Pid]}};
+
 handle_call(_, _From, State) ->
     {reply, {error,bad_call}, State}.
 
@@ -256,6 +282,7 @@ handle_info({Port,{exit_status,Status}}, State)
 	    case find_provider_pppd(State1#state.provider) of
 		[] ->
 		    io:format("BUG: pppd not found\n", []),
+		    inform_subscribers(down, State),
 		    {noreply, State1#state { status=down,
 					     port=undefined}};
 		[UPid] ->
@@ -268,6 +295,7 @@ handle_info({Port,{exit_status,Status}}, State)
        true ->
 	    io:format("exit_status = ~w\n", [Status]),
 	    %% wait for ppp0 to be in state up!
+	    inform_subscribers(down, State),
 	    {noreply, State#state { status=down, port=undefined}}
     end;
 handle_info(_NL={netlink,_Ref,?LINK_NAME,Field,Old,New},State) ->
@@ -278,6 +306,7 @@ handle_info(_NL={netlink,_Ref,?LINK_NAME,Field,Old,New},State) ->
 		true ->
 		    cancel_timer(State#state.tmr),
 		    io:format("UP\n", []),
+		    inform_subscribers(up, State),
 		    {noreply, State#state { status=up, tmr=undefined }};
 		false ->
 		    {noreply, State}
@@ -290,6 +319,7 @@ handle_info(_NL={netlink,_Ref,?LINK_NAME,Field,Old,New},State) ->
 		    cancel_timer(State#state.tmr),
 		    io:format("DOWN\n", []),
 		    State1 = netlink_unsubscribe(State),
+		    inform_subscribers(down, State),
 		    {noreply, State1#state { status=down, tmr=undefined }};
 		false ->
 		    {noreply, State}
@@ -303,6 +333,7 @@ handle_info(_NL={netlink,_Ref,?LINK_NAME,Field,Old,New},State) ->
 handle_info({timeout,Ref,down}, State) when State#state.tmr =:= Ref ->
     if State#state.status =:= final ->
 	    %% something is wrong, but we need to assume ppp is down
+	    inform_subscribers(down, State),
 	    {noreply, State#state { status = down, tmr = undefined }};
        true ->
 	    {noreply, State}
@@ -311,6 +342,7 @@ handle_info({timeout,Ref,up}, State) when State#state.tmr =:= Ref ->
     if State#state.status =:= init ->
 	    %% interface is not coming up
 	    kill_pppd(State#state.unix_pid),
+	    inform_subscribers(down, State),
 	    {noreply, State#state { status = down, tmr = undefined }};
        true ->
 	    {noreply, State}
@@ -319,6 +351,7 @@ handle_info({timeout,Ref,attach}, State) when State#state.tmr =:= Ref ->
     if State#state.status =:= init ->
 	    %% interface is not coming up
 	    kill_pppd(State#state.unix_pid),
+	    inform_subscribers(down, State),
 	    {noreply, State#state { status = down, tmr = undefined }};
        true ->
 	    {noreply, State}
@@ -510,3 +543,10 @@ fake_netlink_wait(Caller,Ref,IfName,Fs0,Addr0,PollTime) ->
     after PollTime ->
 	    fake_netlink_wait(Caller,Ref,IfName,Fs0,Addr0,PollTime)
     end.
+
+inform_subscribers(Msg, _State=#state {subs = Subs}) ->
+    lists:foreach(
+      fun(Pid) when is_pid(Pid) -> Pid ! Msg;
+	 (_) -> ok
+      end, 
+      Subs).
