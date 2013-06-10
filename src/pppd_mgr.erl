@@ -9,8 +9,9 @@
 %%%---- END COPYRIGHT ---------------------------------------------------------
 
 -module(pppd_mgr).
-
 -behaviour(gen_server).
+
+-include("pppd.hrl").
 
 %% API
 -export([start_link/0]).
@@ -38,10 +39,6 @@
 
 -type pppd_status() :: final | down | init | up.
 -type posix() :: atom().
-
--define(ON_TIME,  20000).
--define(OFF_TIME, 10000).
--define(ATTACH_TIME, 2000).
 
 -record(state,
 	{
@@ -177,7 +174,7 @@ handle_call({on,Provider}, _From, State) ->
 			open_port({spawn_executable, ?PPPD},
 				  [{arg0,?PPPD},
 				   {args,["file", PPPFile]},exit_status]),
-		    Tmr = erlang:start_timer(?ON_TIME, self(), up),
+		    Tmr = erlang:start_timer(?PPPD_ON_TIME, self(), up),
 		    {reply, ok, State#state { port=Port,
 					      tmr = Tmr,
 					      provider=Provider,
@@ -186,7 +183,7 @@ handle_call({on,Provider}, _From, State) ->
 		    io:format("pppd found ~p\n", [UPid]),
 		    State1 = netlink_unsubscribe(State),
 		    State2 = netlink_subscribe(State1),
-		    Tmr = erlang:start_timer(?ATTACH_TIME, self(), attach),
+		    Tmr = erlang:start_timer(?PPPD_ATTACH_TIME, self(), attach),
 		    {reply, ok,
 		     State2#state { status=init,
 				    tmr = Tmr,
@@ -206,7 +203,7 @@ handle_call(off, _From, State) ->
     if State#state.status =:= up;
        State#state.status =:= init ->
 	    kill_pppd(State#state.unix_pid),
-	    Tmr = erlang:start_timer(?OFF_TIME, self(), down),
+	    Tmr = erlang:start_timer(?PPPD_OFF_TIME, self(), down),
 	    {reply, ok, State#state { status=final,
 				      tmr = Tmr,
 				      provider = undefined,
@@ -224,7 +221,7 @@ handle_call({attach,Provider}, _From, State) ->
 		    io:format("pppd found ~p\n", [UPid]),
 		    State1 = netlink_unsubscribe(State),
 		    State2 = netlink_subscribe(State1),
-		    Tmr = erlang:start_timer(?ATTACH_TIME, self(), attach),
+		    Tmr = erlang:start_timer(?PPPD_ATTACH_TIME, self(), attach),
 		    {reply, {ok,UPid},
 		     State2#state { status=init,
 				    tmr = Tmr,
