@@ -417,7 +417,7 @@ netlink_start() ->
 netlink_subscribe(State) ->
     case os:type() of
 	{unix,linux} ->
-	    case netlink:subscribe(State#state.link,[flags,local],[flush]) of
+	    case netlink:subscribe(State#state.link,[{link,flags},local],[flush]) of
 		{ok,Mon} ->
 		    State#state { netmon = Mon };
 		_Error ->
@@ -425,7 +425,7 @@ netlink_subscribe(State) ->
 		    State
 	    end;
 	{unix,darwin} ->
-	    case fake_netlink_subscribe(State#state.link,[flags,local],[flush]) of
+	    case fake_netlink_subscribe(State#state.link,[{link,flags},local],[flush]) of
 		{ok,Mon} ->
 		    State#state { netmon = Mon };
 		_Error ->
