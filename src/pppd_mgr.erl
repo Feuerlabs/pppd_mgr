@@ -391,14 +391,30 @@ netlink_subscribe(State) ->
 		    io:format("netlink_subscriber error ~p\n", [_Error]),
 		    State
 	    end;
+	{unix,darwin} ->
+	    case fake_netlink_subscribe(State#state.link,[flags,address],[flush]) of
+		{ok,Mon} ->
+		    State#state { netmon = Mon };
+		_Error ->
+		    io:format("netlink_subscriber error ~p\n", [_Error]),
+		    State
+	    end;
 	_ ->
 	    State
     end.
 
 netlink_unsubscribe(State) ->
     if is_reference(State#state.netmon) ->
-	    netlink:unsubscribe(State#state.netmon),
-	    State#state { netmon = undefined };
+	    case os:type() of
+		{unix,linux} ->
+		    netlink:unsubscribe(State#state.netmon),
+		    State#state { netmon = undefined };
+		{unix,darwin} ->
+		    fake_netlink_unsubscribe(State#state.netmon),
+		    State#state { netmon = undefined };
+		_ ->
+		    State
+	    end;
        true ->
 	    State
     end.
@@ -433,3 +449,64 @@ pidof(What) ->
 		""
 	end,
     string:tokens(Result, " \t\n").
+
+%%
+%% Fake netlink by doing a bit of polling
+%%
+fake_netlink_subscribe(IfName,_Fs,_Flags) ->
+    Caller = self(),
+    Ref = make_ref(),
+    Pid = spawn(fun() ->
+			fake_netlink(Caller,Ref,IfName,undefined,undefined,2000)
+		end),
+    put(fake_netlink, Pid),
+    {ok,Ref}.
+
+fake_netlink_unsubscribe(Ref) ->
+    Pid = get(fake_netlink),
+    if is_pid(Pid) ->
+	    Pid ! {unsubscribe, Ref},
+	    erase(fake_netlink_pid),
+	    ok;
+       true ->
+	    ok
+    end.
+
+fake_netlink(Caller,Ref,IfName,Fs0,Addr0,PollTime) ->
+    case inet:ifget(IfName, [flags,addr]) of
+	{ok,[{flags,Fs1},{addr,Addr1}]} ->
+	    if Fs0 =/= Fs1 ->
+		    Caller ! {netlink,Ref,IfName,flags,Fs0,Fs1};
+	       true ->
+		    ok
+	    end,
+	    if Addr0 =/= Addr1 ->
+		    Caller ! {netlink,Ref,IfName,addr,Addr0,Addr1};
+	       true ->
+		    ok
+	    end,
+	    fake_netlink_wait(Caller,Ref,IfName,Fs1,Addr1,PollTime);
+	{ok,[{flags,Fs1}]} ->
+	    if Fs0 =/= Fs1 ->
+		    Caller ! {netlink,Ref,IfName,flags,Fs0,Fs1};
+	       true ->
+		    ok
+	    end,
+	    if Addr0 =/= undefined ->
+		    Caller ! {netlink,Ref,IfName,addr,Addr0,undefined};
+	       true ->
+		    ok
+	    end,
+	    fake_netlink_wait(Caller,Ref,IfName,Fs1,undefined,PollTime);
+	_Error ->
+	    io:format("error = ~p\n", [_Error]),
+	    fake_netlink_wait(Caller,Ref,IfName,Fs0,Addr0,PollTime)
+    end.
+
+fake_netlink_wait(Caller,Ref,IfName,Fs0,Addr0,PollTime) ->
+    receive
+	{unsubscribe,Ref} ->
+	    ok
+    after PollTime ->
+	    fake_netlink_wait(Caller,Ref,IfName,Fs0,Addr0,PollTime)
+    end.
