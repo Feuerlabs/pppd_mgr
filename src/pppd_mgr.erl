@@ -17,7 +17,8 @@
 -export([start_link/0]).
 -export([on/1, off/0, attach/1]).
 -export([subscribe/0, unsubscribe/0]).
--export([status/0]).
+-export([status/0,
+	 ppp_parameter/1]).
 
 %% gen_server callbacks
 -export([init/1, 
@@ -39,6 +40,7 @@
 
 -type pppd_status() :: final | down | init | up.
 -type posix() :: atom().
+-type ppp_parameter() :: ppp_on_time | ppp_off_time | ppp_idle_time.
 
 -record(state,
 	{
@@ -95,15 +97,24 @@ status() ->
 %% @end
 -spec subscribe() -> ok | {error,posix()}.
 subscribe() ->
-    gen_server:call(?SERVER, {subscribe, self()}).
+    gen_server:call(?SERVER, subscribe).
 
 %% @doc
 %%   Unsubscribe to changes of ppp connection.
 %% @end
 -spec unsubscribe() -> ok | {error,posix()}.
 unsubscribe() ->
-    gen_server:call(?SERVER, {unsubscribe, self()}).
+    gen_server:call(?SERVER, unsubscribe).
 
+%% @doc
+%%   Fetch ppp parameters.
+%% @end
+-spec ppp_parameter(ppp_parameter()) -> term().
+ppp_parameter(ppp_on_time) -> ?PPPD_ON_TIME;
+ppp_parameter(ppp_off_time) ->?PPPD_OFF_TIME;
+ppp_parameter(ppp_idle_time) ->?PPPD_IDLE_TIME;
+ppp_parameter(_) -> undefined.
+     
 %%--------------------------------------------------------------------
 %% @doc
 %% Starts the server
@@ -238,9 +249,9 @@ handle_call({attach,Provider}, _From, State) ->
 handle_call(status, _From, State) ->
     {reply, State#state.status, State};
 
-handle_call({subscribe, Pid}, _From, State=#state {subs = Subs}) ->
+handle_call(subscribe, {Pid, _Tag}, State=#state {subs = Subs}) ->
     {reply, ok, State#state {subs = lists:usort([Pid | Subs])}};
-handle_call({unsubscribe, Pid}, _From, State=#state {subs = Subs}) ->
+handle_call(unsubscribe, {Pid, _Tag}, State=#state {subs = Subs}) ->
     {reply, ok, State#state {subs = Subs -- [Pid]}};
 
 handle_call(_, _From, State) ->

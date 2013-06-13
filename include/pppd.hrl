@@ -28,7 +28,7 @@
 -define(PPPD_ON_TIME,  20000).
 -define(PPPD_OFF_TIME, 10000).
 -define(PPPD_ATTACH_TIME, 2000).
--define(PPPD_IDLE_TIME,  120000). %% ??
+-define(PPPD_IDLE_TIME,  60000). %% ??
 
 %% Convenience defines 
 -ifndef(ee).
