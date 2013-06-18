@@ -213,6 +213,7 @@ handle_call({on,Provider}, _From, State) ->
 handle_call(off, _From, State) ->
     if State#state.status =:= up;
        State#state.status =:= init ->
+	    io:format("off: killing ~p\n", [State#state.unix_pid]),
 	    kill_pppd(State#state.unix_pid),
 	    Tmr = erlang:start_timer(?PPPD_OFF_TIME, self(), down),
 	    {reply, ok, State#state { status=final,
@@ -349,6 +350,7 @@ handle_info({timeout,Ref,down}, State) when State#state.tmr =:= Ref ->
 handle_info({timeout,Ref,up}, State) when State#state.tmr =:= Ref ->
     if State#state.status =:= init ->
 	    %% interface is not coming up
+	    io:format("up timeout: killing ~p\n", [State#state.unix_pid]),
 	    kill_pppd(State#state.unix_pid),
 	    inform_subscribers(down, State),
 	    {noreply, State#state { status = down, tmr = undefined }};
@@ -358,6 +360,7 @@ handle_info({timeout,Ref,up}, State) when State#state.tmr =:= Ref ->
 handle_info({timeout,Ref,attach}, State) when State#state.tmr =:= Ref ->
     if State#state.status =:= init ->
 	    %% interface is not coming up
+	    io:format("attach timeout: killing ~p\n", [State#state.unix_pid]),
 	    kill_pppd(State#state.unix_pid),
 	    inform_subscribers(down, State),
 	    {noreply, State#state { status = down, tmr = undefined }};
@@ -400,7 +403,7 @@ code_change(_OldVsn, State, _Extra) ->
 kill_pppd(undefined) ->
     ok;
 kill_pppd(Pid) ->
-    os:cmd("/bin/kill -HUP " ++ Pid).
+    os:cmd("/bin/kill -9 " ++ Pid).
 
 cancel_timer(undefined) ->
     ok;

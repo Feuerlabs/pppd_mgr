@@ -28,9 +28,11 @@ module ppp {
 	}
 
 	leaf auth { type empty; }
+	leaf noauth { type empty; }
 	leaf call { type string; }
 	leaf connect { type string; }
 	leaf crtscts { type empty; }
+	leaf xonxoff { type empty; }
 	leaf defaultroute { type empty; }
 	leaf replacedefaultroute { type empty; }
 	leaf disconnect { type string; }	
@@ -41,7 +43,11 @@ module ppp {
 	leaf mru { type uint32 { range "128..16384"; }}
 	leaf mtu { type uint32 { range "1280.."; }}
 	leaf passive { type empty; }
-
 	/* ADD MORE HERE ... */
+	leaf nodeflate { type empty; }
+	leaf nobsdcomp { type empty; }
+	leaf noipdefault { type empty; }
+
+
     }   
 }
